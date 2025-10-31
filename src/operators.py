@@ -190,7 +190,7 @@ class NucFunc:
     def __call__(self, r):
         """Computes the nuclear potential at a given point r. 
 
-        # \(V_{nuc}(r) = -\sum_{A} \frac{Z_A}{|R_A - r|}\)
+        V_nuc(r) = - sum_A Z_A / |R_A - r|
 
         Arguments:
             r: The point at which the nuclear potential will be computed.

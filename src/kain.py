@@ -1,8 +1,11 @@
 from vampyr import vampyr3d as vp
 import numpy as np
+import os
 
+# import modules needed for SCF procedure
 import operators
 import system
+
 
 # This file contains all the functions needed for the SCF KAIN procedure. The implementation is based on 
 # src/scfsolv.py from https://github.com/Dheasra/response.
@@ -50,7 +53,6 @@ class SCF:
 
         self.E_nuc = self.calculateNuclearEnergy()
 
-
     def initialGuess(self):
         """Generates the initial guess for the KAIN SCF procedure by
         loading orbitals generated with MRChem from disk.
@@ -65,14 +67,17 @@ class SCF:
         # load initial guess from disk
         for i in range(self.nOrbs):
             phi = vp.FunctionTree(self.mra)
-            phi.loadTree(f"{init_g_dir}phi_p_scf_idx_{i}_re")
+            if os.path.exists(f"{init_g_dir}phi_p_scf_idx_{i}_re.tree"):
+                phi.loadTree(f"{init_g_dir}phi_p_scf_idx_{i}_re")
+            else:
+                print("Error: could not load initial guess orbital", i)
             Phi_n.append(phi)
         # populate the KAIN history structures
         self.Phi_np1 = np.array(Phi_n)
         self.Phi = [[phi] for phi in Phi_n]
         self.f_history = [[] for i in range(self.nOrbs)]
 
-        # make a first step to obtain a minimal history
+        # make a first SCF step to obtain a minimal history
         # calculate initial Fock matrix
         self.calculateFock()
         # calculate new orbitals
