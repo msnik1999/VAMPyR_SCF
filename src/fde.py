@@ -33,9 +33,11 @@ class FDE:
     K_n = np.array
     Kin = operators.KineticOperator
     V_nuc_env = operators.NuclearOperator
-    V_nuc_act = float
+    V_nuc_act = operators.NuclearOperator
     E_nuc = float
+    E_nuc_act = float
     E_nuc_emb = float
+    E_HF_env = float
     energies = list
     updates = list
 
@@ -45,6 +47,8 @@ class FDE:
         self.sysB = sysB
         self.mra = mra
         self.precision = precision
+        self.energies = []
+        self.updates = []
 
     def runFDE(self, threshold, maxIter = 100, kain_start = 0, kain_history = 5):
         # Placeholder for FDE SCF procedure
@@ -60,6 +64,7 @@ class FDE:
         print("Running isolated SCF for subsystem B")
         PhiB_history, energiesB, updatesB = scfB.runSCF(threshold, maxIter, self.kain_start, self.kain_history)
         print("Isolated SCF complete.\n")
+        self.E_HF_env = energiesB[-1]['$E_{HF}$']
 
         PhiA = []
         PhiB = []
@@ -70,9 +75,11 @@ class FDE:
         self.nOrbs = len(PhiA)
         print("PhiA", PhiA)
         print("PhiB", PhiB)
+        self.PhiB = np.array(PhiB)
 
-        V_nuc_act = scfA.V_nuc
-        self.V_nuc_act = self.calc_overlap(self.PhiB, V_nuc_act(self.PhiB))
+        self.V_nuc_act = scfA.V_nuc
+        V_nuc_act_tmp = self.V_nuc_act(self.PhiB)
+        self.E_nuc_act = self.calc_overlap(self.PhiB, V_nuc_act_tmp).trace()
         self.E_nuc = self.calculateNuclearEnergy()
         self.E_nuc_emb = self.calculateNuclearEnergy(emb = True)
 
@@ -132,6 +139,7 @@ class FDE:
             print(f"E_en_emb: {energy['$E_{en_emb}$']}", f" | E_el_emb: {energy['$E_{el_emb}$']}")
             print(f"E_tot_emb: {energy['$E_{tot_emb}$']}", f" | E_HF_emb: {energy['$E_{HF_emb}$']}")
             print(f"E_kin: {energy['$E_{kin}$']}")
+            print("E_nuc_emb: ", self.E_nuc_emb)
             print(f"Max Orbital Update: {max(self.updates[-1])}")
             print("---------------------\n")
             iteration += 1
@@ -182,7 +190,7 @@ class FDE:
                 del self.f_history[i][0]
         
         # calculate new Fock matrix and energies
-        self.calculateFock()
+        self.calculateEmbeddingFock()
         energy = self.calculateEnergy() 
 
         self.energies.append(energy)
@@ -227,7 +235,7 @@ class FDE:
         self.K_n_emb = self.K(self.Phi_np1)
         V_nuc_env_act = self.V_nuc_env(self.Phi_np1)
         # V_emb = V_nuc_env_act + 2 * J_act_env - K_act_env
-        self.V_emb = V_nuc_env_act + 2 * self.J_n_emb - self.K_n_emb
+        self.V_emb = V_nuc_env_act + 2 * self.J_n_emb# - self.K_n_emb
 
         self.V = self.V_act + self.V_emb
         # calculate the embedded Fock matrix
@@ -287,8 +295,8 @@ class FDE:
         K_mat = self.calc_overlap(self.Phi_np1, self.K_n)
         
         V_emb_mat = self.calc_overlap(self.Phi_np1, self.V_emb)
-        J_mat = self.calc_overlap(self.Phi_np1, self.J_n_emb)
-        K_mat = self.calc_overlap(self.Phi_np1, self.K_n_emb)
+        J_mat_emb = self.calc_overlap(self.Phi_np1, self.J_n_emb)
+        K_mat_emb = self.calc_overlap(self.Phi_np1, self.K_n_emb)
 
         # calculate energy contributions
         e = 2.0 * self.F.trace()
@@ -298,10 +306,13 @@ class FDE:
         E_HF_act = E_tot_act + self.E_nuc
 
         E_en_emb = 2.0 * V_emb_mat.trace()
-        E_el_emb = 2.0 * J_mat.trace() - K_mat.trace()
+        E_el_emb = 2.0 * J_mat_emb.trace()# - K_mat_emb.trace()
         E_tot_emb = e - E_el_emb
-        E_HF_emb = E_tot_emb + self.E_nuc_emb
+        E_esi = 2 * self.E_nuc_act + self.E_nuc_emb + 4 * J_mat_emb.trace() + 2 * self.calc_overlap(self.Phi_np1, self.V_nuc_env(self.Phi_np1)).trace() 
+        E_HF_emb = E_HF_act + E_esi + self.E_HF_env
         E_kin = E_tot_act - E_en_act - E_el_act + (E_tot_emb - E_en_emb - E_el_emb)
+
+        print("E_esi: ", E_esi, " | E_nuc_act: ", 2 * self.E_nuc_act, " | E_nuc_emb: ", self.E_nuc_emb, " | E_e_env_e: ", 4 * J_mat_emb.trace(), " | E_nuc_env_act: ", 2 * self.calc_overlap(self.Phi_np1, self.V_nuc_env(self.Phi_np1)).trace())
 
         return {
             "$E_{orb}$": e,

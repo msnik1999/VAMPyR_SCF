@@ -1,7 +1,6 @@
 from vampyr import vampyr3d as vp
 import numpy as np
 import os
-import time
 
 # import modules needed for SCF procedure
 import operators
@@ -139,13 +138,11 @@ class SCF:
             iteration: The current SCF iteration number.
         """
         # obatain new orbitals from current guess
-        print("Test1")
         Lambda = np.diag(self.F)
         G = operators.HelmholtzOperator(self.mra, Lambda, self.precision)
         self.Phi_np1 = -2 * G(self.V + (np.diag(Lambda) - self.F) @ self.Phi_np1)
         # orthogonalize new orbitals and obtain new orbital update
         self.loewdinOrthogonalization() # maybe not?
-        print("Test2")
 
         update = []
         for i in range(self.nOrbs):
@@ -166,7 +163,6 @@ class SCF:
             self.Phi_np1[i] = self.Phi[i][-1] + delta
             self.Phi_np1[i].normalize()
 
-        print("Test3")
         # orthogonalize new orbitals
         self.loewdinOrthogonalization()
         # add new orbitals to history and crop history if necessary
@@ -175,12 +171,9 @@ class SCF:
             if iteration < self.kain_start or len(self.Phi[i]) > self.kain_history:
                 del self.Phi[i][0]
                 del self.f_history[i][0]
-        print("Test4")
         
         # calculate new Fock matrix and energies
         self.calculateFock()
-        print("Test5")
-        time.sleep(0.1)
         energy = self.calculateEnergy() 
 
         self.energies.append(energy)
