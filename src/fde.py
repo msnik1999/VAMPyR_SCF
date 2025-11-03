@@ -1,86 +1,101 @@
 from vampyr import vampyr3d as vp
 import numpy as np
 import os
-import time
 
-# import modules needed for SCF procedure
 import operators
 import system
+import kain
+
+# This file contains the Frozen-Density Embedding (FDE) implementation
+
+class FDE:
+
+    sysA = system.Molecule
+    sysB = system.Molecule
+    mra = vp.MultiResolutionAnalysis
+    precision = float
+    nOrbs = int
+    kain_start = int
+    kain_history = int
+    Phi_np1 = np.array
+    PhiB = np.array
+    Phi = list
+    f_history = list
+    F = np.array
+    V = np.array
+    V_act = np.array
+    V_emb = np.array
+    J_emb = operators.CoulombInteractionOperator
+    K_emb = operators.ExchangeInteractionOperator
+    J_n_emb = np.array
+    K_n_emb = np.array
+    J_n = np.array
+    K_n = np.array
+    Kin = operators.KineticOperator
+    V_nuc_env = operators.NuclearOperator
+    V_nuc_act = float
+    E_nuc = float
+    E_nuc_emb = float
+    energies = list
+    updates = list
 
 
-# This file contains all the functions needed for the SCF KAIN procedure. The implementation is based on 
-# src/scfsolv.py from https://github.com/Dheasra/response.
-
-class SCF:
-    """The SCF class implements the KAIN SCF procedure.
-
-    Attributes:
-        molecule: The molecular system for which the SCF procedure is performed.
-        mra: The multi-resolution analysis (MRA) object.
-        precision: The desired precision for the SCF calculations.
-    """
-
-    mra = vp.MultiResolutionAnalysis            # mra object
-    molecule = system.Molecule                  # molecular system
-    precision = float                           # desired precision
-    Phi_np1 = np.array                          # new orbitals
-    Phi = list                                  # history of orbitals
-    f_history = list                            # history of orbital updates
-    F = np.array                                # Fock matrix   
-    V = np.array                                # total potential
-    J_n = np.array                              # Coulomb potential 
-    K_n = np.array                              # Exchange potential
-    Kin = operators.KineticOperator             # Kinetic operator
-    V_nuc = operators.NuclearOperator           # Nuclear operator
-    kain_history = int                          # number of previous iterations to use in KAIN
-    kain_start = int                            # iteration number to start applying KAIN
-    nOrbs = int                                 # number of orbitals
-    energies = list                             # energy contributions      
-    updates = list                              # orbital updates
-    E_nuc = float                               # nuclear repulsion energy
-
-
-    def __init__(self, molecule, mra, precision):
-        """Initializes the SCF procedure with a molecular system, MRA, and precision."""
-        self.molecule = molecule
+    def __init__(self, sysA: system.Molecule, sysB: system.Molecule, mra, precision):
+        self.sysA = sysA
+        self.sysB = sysB
         self.mra = mra
         self.precision = precision
 
-        self.V_nuc = operators.NuclearOperator(self.molecule, self.mra, self.precision)
+    def runFDE(self, threshold, maxIter = 100, kain_start = 0, kain_history = 5):
+        # Placeholder for FDE SCF procedure
+        self.kain_start = kain_start
+        self.kain_history = kain_history
+
+        print("Setting up isolated SCF calculations for subsystems A and B")
+        scfA = kain.SCF(self.sysA, self.mra, self.precision)
+        scfB = kain.SCF(self.sysB, self.mra, self.precision)
+
+        print("Running isolated SCF for subsystem A")
+        PhiA_history, energiesA, updatesA = scfA.runSCF(threshold, maxIter, self.kain_start, self.kain_history)
+        print("Running isolated SCF for subsystem B")
+        PhiB_history, energiesB, updatesB = scfB.runSCF(threshold, maxIter, self.kain_start, self.kain_history)
+        print("Isolated SCF complete.\n")
+
+        PhiA = []
+        PhiB = []
+        for phi in PhiA_history:
+            PhiA.append(phi[-1])
+        for phi in PhiB_history:
+            PhiB.append(phi[-1])
+        self.nOrbs = len(PhiA)
+        print("PhiA", PhiA)
+        print("PhiB", PhiB)
+
+        V_nuc_act = scfA.V_nuc
+        self.V_nuc_act = self.calc_overlap(self.PhiB, V_nuc_act(self.PhiB))
+        self.E_nuc = self.calculateNuclearEnergy()
+        self.E_nuc_emb = self.calculateNuclearEnergy(emb = True)
+
+        self.V_nuc_env = scfB.V_nuc
         self.Kin = operators.KineticOperator(self.mra, self.precision)
 
-        self.energies = []
-        self.updates = []
+        print("Running Embedded SCF")
+        self.runEmbeddedSCF(threshold, maxIter, PhiA, PhiB)
 
-        self.E_nuc = self.calculateNuclearEnergy()
+        return self.Phi, self.energies, np.array(self.updates)
 
-    def initialGuess(self):
-        """Generates the initial guess for the KAIN SCF procedure by
-        loading orbitals generated with MRChem from disk.
-
-        Performs a first SCF step to populate the history needed for KAIN.
-        """
-        # initialize variables
-        init_g_dir = self.molecule.getPath()
-        atoms = self.molecule.getAtoms()
-        self.nOrbs = int((np.array([atom.getCharge() for atom in atoms]).sum()) / 2.0)
-        Phi_n = []
-        # load initial guess from disk
-        for i in range(self.nOrbs):
-            phi = vp.FunctionTree(self.mra)
-            if os.path.exists(f"{init_g_dir}phi_p_scf_idx_{i}_re.tree"):
-                phi.loadTree(f"{init_g_dir}phi_p_scf_idx_{i}_re")
-            else:
-                print("Error: could not load initial guess orbital", i)
-            Phi_n.append(phi)
-        # populate the KAIN history structures
-        self.Phi_np1 = np.array(Phi_n)
-        self.Phi = [[phi] for phi in Phi_n]
+    def initialGuessEmbedding(self, PhiA, PhiB):
+        # Placeholder for initial guess of embedding
+        self.Phi_np1 = np.array(PhiA)
+        self.Phi = [[phi] for phi in PhiA]
         self.f_history = [[] for i in range(self.nOrbs)]
+        self.PhiB = PhiB
 
         # make a first SCF step to obtain a minimal history
         # calculate initial Fock matrix
-        self.calculateFock()
+        self.J = operators.CoulombInteractionOperator(self.mra, self.PhiB, self.precision)
+        self.K = operators.ExchangeInteractionOperator(self.mra, self.PhiB, self.precision)
+        self.calculateEmbeddingFock()
         # calculate new orbitals
         Lambda = np.diag(self.F)
         G = operators.HelmholtzOperator(self.mra, Lambda, self.precision)
@@ -98,40 +113,33 @@ class SCF:
                 del self.Phi[i][0]
         return
     
-    def runSCF(self, threshold, maxIter = 100, kain_start = 0, kain_history = 5):
-        """Runs the KAIN SCF procedure.
+    def runEmbeddedSCF(self, threshold, maxIter, PhiA, PhiB):
+        # Placeholder for embedded SCF procedure
+        self.initialGuessEmbedding(PhiA, PhiB)
 
-        Arguments:
-            threshold: The convergence threshold for the SCF procedure.
-            maxIter: The maximum number of SCF iterations to perform.
-            kain_start: The iteration number to start applying KAIN.
-            kain_history: The number of previous iterations to use in KAIN.
+        self.calculateEmbeddingFock()
 
-        Returns:
-            The converged orbitals, energies, and updates.
-        """
-        self.kain_start = kain_start
-        self.kain_history = kain_history
-
-        # calculate first initial guess and create a first history
-        self.initialGuess()
-        # calculate next Fock matrix
-        self.calculateFock()
-        
         iteration = 0
         while True:
             print(f"=============Iteration: {iteration}")
             # Here, we calculate new orbitals, apply KAIN and calculate the new Fock matrix
             self.expandSolution(iteration)
             energy = self.energies[-1]
-            print(iteration, " |  E_tot:", energy["$E_{tot}$"], " |  E_HF:", energy["$E_{HF}$"], " |  dPhi:", max(self.updates[-1]))
-            print("E_orb:", energy["$E_{orb}$"], " |  E_en:", energy["$E_{en}$"], " |  E_el:", energy["$E_{el}$"], " |  E_kin:", energy["$E_{kin}$"])
+            print("Energy Contributions:")
+            print("---------------------")
+            print(f"E_orb: {energy['$E_{orb}$']}", f" | E_en_act: {energy['$E_{en_act}$']}", f" | E_el_act: {energy['$E_{el_act}$']}")
+            print(f"E_tot_act: {energy['$E_{tot_act}$']}", f" | E_HF_act: {energy['$E_{HF_act}$']}")
+            print(f"E_en_emb: {energy['$E_{en_emb}$']}", f" | E_el_emb: {energy['$E_{el_emb}$']}")
+            print(f"E_tot_emb: {energy['$E_{tot_emb}$']}", f" | E_HF_emb: {energy['$E_{HF_emb}$']}")
+            print(f"E_kin: {energy['$E_{kin}$']}")
+            print(f"Max Orbital Update: {max(self.updates[-1])}")
+            print("---------------------\n")
             iteration += 1
 
             if max(self.updates[-1]) < threshold or iteration > maxIter:
                 break
-        return self.Phi, self.energies, np.array(self.updates)
-
+        return
+    
     def expandSolution(self, iteration):
         """Expands the current solution using KAIN to obtain new orbitals.
         
@@ -139,14 +147,12 @@ class SCF:
             iteration: The current SCF iteration number.
         """
         # obatain new orbitals from current guess
-        print("Test1")
         Lambda = np.diag(self.F)
         G = operators.HelmholtzOperator(self.mra, Lambda, self.precision)
         self.Phi_np1 = -2 * G(self.V + (np.diag(Lambda) - self.F) @ self.Phi_np1)
         # orthogonalize new orbitals and obtain new orbital update
         self.loewdinOrthogonalization() # maybe not?
-        print("Test2")
-
+        
         update = []
         for i in range(self.nOrbs):
             # add current orbital and new orbital update to history
@@ -166,7 +172,6 @@ class SCF:
             self.Phi_np1[i] = self.Phi[i][-1] + delta
             self.Phi_np1[i].normalize()
 
-        print("Test3")
         # orthogonalize new orbitals
         self.loewdinOrthogonalization()
         # add new orbitals to history and crop history if necessary
@@ -175,18 +180,15 @@ class SCF:
             if iteration < self.kain_start or len(self.Phi[i]) > self.kain_history:
                 del self.Phi[i][0]
                 del self.f_history[i][0]
-        print("Test4")
         
         # calculate new Fock matrix and energies
         self.calculateFock()
-        print("Test5")
-        time.sleep(0.1)
         energy = self.calculateEnergy() 
 
         self.energies.append(energy)
         self.updates.append(update)
         return 
-
+    
     def setupLinearSystem(self, phi, dphi_history):
         """Sets up and solves the linear system Ax = b needed for KAIN.
 
@@ -211,20 +213,25 @@ class SCF:
         # solve Ax = b
         return np.linalg.solve(A, b)
 
-    def calculateFock(self):
-        """Calculates the Fock matrix, as well as the underlying potentials based on the current orbitals."""
-        # initialize Coulomb and exchange operators
+    def calculateEmbeddingFock(self):
+        # active system contributions only
         J = operators.CoulombOperator(self.mra, self.Phi_np1, self.precision)
         K = operators.ExchangeOperator(self.mra, self.Phi_np1, self.precision)
-        # calculate V_ne based on current orbitals
-        V_n = self.V_nuc(self.Phi_np1)
-        # calculate J and K based on current orbitals
         self.J_n = J()
         self.K_n = K()
-        # calculate total potential V
-        self.V = V_n + 2 * self.J_n - self.K_n
-        # calculate the Fock matrix
-        self.F = self.calc_overlap(self.Phi_np1, self.V + self.Kin(self.Phi_np1), diag = False)
+        # V_act = V_nuc_act + 2 * J_act - K_act 
+        self.V_act = self.V_nuc_act(self.Phi_np1) + 2 * self.J_n - self.K_n
+
+        # embedding contributions
+        self.J_n_emb = self.J(self.Phi_np1)
+        self.K_n_emb = self.K(self.Phi_np1)
+        V_nuc_env_act = self.V_nuc_env(self.Phi_np1)
+        # V_emb = V_nuc_env_act + 2 * J_act_env - K_act_env
+        self.V_emb = V_nuc_env_act + 2 * self.J_n_emb - self.K_n_emb
+
+        self.V = self.V_act + self.V_emb
+        # calculate the embedded Fock matrix
+        self.F = self.calc_overlap(self.Phi_np1, self.V + self.Kin(self.Phi_np1))
         return
     
     def loewdinOrthogonalization(self):
@@ -268,46 +275,68 @@ class SCF:
             # the diagonal elements were added twice, so divide them by 2
             S[np.diag_indices_from(S)] /= 2.0
         return S
-
+    
     def calculateEnergy(self):
         """Calculates the different energy contributions based on the current orbitals and Fock matrix.
 
         Returns:
             A dictionary containing the different energy contributions."""
         # calculate different Fock contributions as matrices
-        V_mat = self.calc_overlap(self.Phi_np1, self.V)
+        V_act_mat = self.calc_overlap(self.Phi_np1, self.V_act)
         J_mat = self.calc_overlap(self.Phi_np1, self.J_n)
         K_mat = self.calc_overlap(self.Phi_np1, self.K_n)
+        
+        V_emb_mat = self.calc_overlap(self.Phi_np1, self.V_emb)
+        J_mat = self.calc_overlap(self.Phi_np1, self.J_n_emb)
+        K_mat = self.calc_overlap(self.Phi_np1, self.K_n_emb)
 
         # calculate energy contributions
         e = 2.0 * self.F.trace()
-        E_en = 2.0 * V_mat.trace()
-        E_el = 2.0 * J_mat.trace() - K_mat.trace()
-        E_tot = e - E_el
-        E_kin = E_tot - E_en - E_el
-        E_HF = E_tot + self.E_nuc
+        E_en_act = 2.0 * V_act_mat.trace()
+        E_el_act = 2.0 * J_mat.trace() - K_mat.trace()
+        E_tot_act = e - E_el_act
+        E_HF_act = E_tot_act + self.E_nuc
+
+        E_en_emb = 2.0 * V_emb_mat.trace()
+        E_el_emb = 2.0 * J_mat.trace() - K_mat.trace()
+        E_tot_emb = e - E_el_emb
+        E_HF_emb = E_tot_emb + self.E_nuc_emb
+        E_kin = E_tot_act - E_en_act - E_el_act + (E_tot_emb - E_en_emb - E_el_emb)
 
         return {
             "$E_{orb}$": e,
-            "$E_{en}$": E_en,
-            "$E_{el}$": E_el,
-            "$E_{kin}$": E_kin,
-            "$E_{tot}$": E_tot,
-            "$E_{HF}$": E_HF
+            "$E_{en_act}$": E_en_act,
+            "$E_{el_act}$": E_el_act,
+            "$E_{tot_act}$": E_tot_act,
+            "$E_{HF_act}$": E_HF_act,
+            "$E_{en_emb}$": E_en_emb,
+            "$E_{el_emb}$": E_el_emb,
+            "$E_{tot_emb}$": E_tot_emb,
+            "$E_{HF_emb}$": E_HF_emb,
+            "$E_{kin}$": E_kin
         }
-
-    def calculateNuclearEnergy(self):
+    
+    def calculateNuclearEnergy(self, emb = False):
         """Calculates the nuclear repulsion energy of the molecular system.
         Returns:
             The nuclear repulsion energy as a float.
         """
         # get atomic coordinates and charges 
-        coords = np.array([atom.getCoords() for atom in self.molecule.getAtoms()])
-        charges = np.array([atom.getCharge() for atom in self.molecule.getAtoms()])
-        nAtoms = len(self.molecule.getAtoms())
-        # calculate nuclear repulsion energy by using double sum over all atom pairs
-        energy = np.sum([
-            charges[i] * charges[j] / np.linalg.norm(coords[i] - coords[j])
-            for i in range(nAtoms) for j in range(i + 1, nAtoms)
-        ])
+        coordsA = np.array([atom.getCoords() for atom in self.sysA.getAtoms()])
+        chargesA = np.array([atom.getCharge() for atom in self.sysA.getAtoms()])
+        nAtomsA = len(self.sysA.getAtoms())
+        if emb:
+            coordsB = np.array([atom.getCoords() for atom in self.sysB.getAtoms()])
+            chargesB = np.array([atom.getCharge() for atom in self.sysB.getAtoms()])
+            nAtomsB = len(self.sysB.getAtoms())
+            energy = np.sum([
+                chargesA[i] * chargesB[j] / np.linalg.norm(coordsA[i] - coordsB[j])
+                for i in range(nAtomsA) for j in range(nAtomsB)
+            ])
+        else:
+            # calculate nuclear repulsion energy by using double sum over all atom pairs
+            energy = np.sum([
+                chargesA[i] * chargesA[j] / np.linalg.norm(coordsA[i] - coordsA[j])
+                for i in range(nAtomsA) for j in range(i + 1, nAtomsA)
+            ])
         return float(energy)
