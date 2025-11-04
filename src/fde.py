@@ -73,8 +73,6 @@ class FDE:
         for phi in PhiB_history:
             PhiB.append(phi[-1])
         self.nOrbs = len(PhiA)
-        print("PhiA", PhiA)
-        print("PhiB", PhiB)
         self.PhiB = np.array(PhiB)
 
         self.V_nuc_act = scfA.V_nuc
@@ -97,6 +95,8 @@ class FDE:
         self.Phi = [[phi] for phi in PhiA]
         self.f_history = [[] for i in range(self.nOrbs)]
         self.PhiB = PhiB
+        overlap = self.calc_overlap(self.Phi_np1, self.PhiB)
+        print("Initial Overlap between active and environment orbitals: ", overlap)
 
         # make a first SCF step to obtain a minimal history
         # calculate initial Fock matrix
@@ -131,6 +131,8 @@ class FDE:
             print(f"=============Iteration: {iteration}")
             # Here, we calculate new orbitals, apply KAIN and calculate the new Fock matrix
             self.expandSolution(iteration)
+            overlap = self.calc_overlap(self.Phi_np1, self.PhiB)
+            print("Overlap between active and environment orbitals: ", overlap)
             energy = self.energies[-1]
             print("Energy Contributions:")
             print("---------------------")
@@ -139,7 +141,6 @@ class FDE:
             print(f"E_en_emb: {energy['$E_{en_emb}$']}", f" | E_el_emb: {energy['$E_{el_emb}$']}")
             print(f"E_tot_emb: {energy['$E_{tot_emb}$']}", f" | E_HF_emb: {energy['$E_{HF_emb}$']}")
             print(f"E_kin: {energy['$E_{kin}$']}")
-            print("E_nuc_emb: ", self.E_nuc_emb)
             print(f"Max Orbital Update: {max(self.updates[-1])}")
             print("---------------------\n")
             iteration += 1
@@ -223,10 +224,10 @@ class FDE:
 
     def calculateEmbeddingFock(self):
         # active system contributions only
-        J = operators.CoulombOperator(self.mra, self.Phi_np1, self.precision)
-        K = operators.ExchangeOperator(self.mra, self.Phi_np1, self.precision)
-        self.J_n = J()
-        self.K_n = K()
+        J_act = operators.CoulombOperator(self.mra, self.Phi_np1, self.precision)
+        K_act = operators.ExchangeOperator(self.mra, self.Phi_np1, self.precision)
+        self.J_n = J_act()
+        self.K_n = K_act()
         # V_act = V_nuc_act + 2 * J_act - K_act 
         self.V_act = self.V_nuc_act(self.Phi_np1) + 2 * self.J_n - self.K_n
 
@@ -235,7 +236,8 @@ class FDE:
         self.K_n_emb = self.K(self.Phi_np1)
         V_nuc_env_act = self.V_nuc_env(self.Phi_np1)
         # V_emb = V_nuc_env_act + 2 * J_act_env - K_act_env
-        self.V_emb = V_nuc_env_act + 2 * self.J_n_emb# - self.K_n_emb
+        self.V_emb = V_nuc_env_act + 2 * self.J_n_emb
+        # self.V_emb = V_nuc_env_act + 2 * self.J_n_emb - self.K_n_emb
 
         self.V = self.V_act + self.V_emb
         # calculate the embedded Fock matrix
@@ -306,7 +308,8 @@ class FDE:
         E_HF_act = E_tot_act + self.E_nuc
 
         E_en_emb = 2.0 * V_emb_mat.trace()
-        E_el_emb = 2.0 * J_mat_emb.trace()# - K_mat_emb.trace()
+        E_el_emb = 2.0 * J_mat_emb.trace()
+        # E_el_emb = 2.0 * J_mat_emb.trace() - K_mat_emb.trace()
         E_tot_emb = e - E_el_emb
         E_esi = 2 * self.E_nuc_act + self.E_nuc_emb + 4 * J_mat_emb.trace() + 2 * self.calc_overlap(self.Phi_np1, self.V_nuc_env(self.Phi_np1)).trace() 
         E_HF_emb = E_HF_act + E_esi + self.E_HF_env
