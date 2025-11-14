@@ -95,8 +95,6 @@ class FDE:
         self.Phi = [[phi] for phi in PhiA]
         self.f_history = [[] for i in range(self.nOrbs)]
         self.PhiB = PhiB
-        overlap = self.calc_overlap(self.Phi_np1, self.PhiB)
-        print("Initial Overlap between active and environment orbitals: ", overlap)
 
         # make a first SCF step to obtain a minimal history
         # calculate initial Fock matrix
@@ -131,8 +129,6 @@ class FDE:
             print(f"=============Iteration: {iteration}")
             # Here, we calculate new orbitals, apply KAIN and calculate the new Fock matrix
             self.expandSolution(iteration)
-            overlap = self.calc_overlap(self.Phi_np1, self.PhiB)
-            print("Overlap between active and environment orbitals: ", overlap)
             energy = self.energies[-1]
             print("Energy Contributions:")
             print("---------------------")
